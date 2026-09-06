@@ -119,12 +119,15 @@ Result: exactly **one order** exists, regardless of how many retries.
 
 ### Step-by-step: payment webhook arrives twice
 
-The payment provider sends `POST /webhook` with `{ paymentRef: "PAY-xyz", event: "success" }` twice (or out of order).
+> **Implementation note:** This take-home uses a synchronous fake payment (`fakePayment()`) and does not implement a real webhook endpoint. Orders are created with `status = 'paid'` immediately after the fake payment resolves — there is no `'pending'` state. This matches the assignment's use of a fake provider.
 
-1. **First webhook:** `UPDATE orders SET status='paid' WHERE payment_ref='PAY-xyz' AND status='pending'` → affects **1 row**.
-2. **Second webhook:** same query → `status` is already `'paid'` → affects **0 rows**. No second order created.
+**In production**, the payment provider sends `POST /webhook` asynchronously. The correct idempotent pattern is:
 
-The UPDATE is naturally idempotent — it can run 100 times and the result is always the same single paid order.
+1. Order is created with `status = 'pending'` when checkout begins (before calling the real provider).
+2. **First webhook:** `UPDATE orders SET status='paid' WHERE payment_ref='PAY-xyz' AND status='pending'` → affects **1 row**.
+3. **Second webhook (duplicate):** same query → `status` is already `'paid'` → affects **0 rows**. No second update.
+
+The guarded `WHERE status='pending'` clause makes the UPDATE naturally idempotent — it can run 100 times and the result is always the same single paid order. In addition, the provider's unique `paymentRef` can be stored with a `UNIQUE` constraint to reject duplicate inserts at the DB level.
 
 ### The checklist answers
 
@@ -132,8 +135,9 @@ The UPDATE is naturally idempotent — it can run 100 times and the result is al
 |----------|--------|
 | Two people click Buy on the last unit at the same moment | One acquires the `FOR UPDATE` row lock and proceeds. The other **waits** at the lock, then reads `stock = 0` after the first commits, and gets 409 out_of_stock. |
 | Payment provider never replies | `Promise.race([fakePayment(), timeout(6000)])` fires after 6 s. Stock is compensated back (`stock + qty`). Idempotency key set to `failed`. Reserved stock is **never stuck**. |
-| Success webhook arrives twice | `UPDATE orders SET status='paid' WHERE payment_ref=? AND status='pending'` — the second time, `status` is already `'paid'`, so 0 rows change. One order. |
+| Success webhook arrives twice | **Production answer:** `UPDATE orders SET status='paid' WHERE payment_ref=? AND status='pending'` — the second webhook finds `status` already `'paid'`, 0 rows change. **This implementation:** no real webhook — fake payment is synchronous, order written as `'paid'` directly. |
 | User retries 5 times | All 5 hit the idempotency key check. Only the first (rowCount = 1) proceeds. The other 4 return the cached response. One order. |
+
 
 ---
 
