@@ -95,11 +95,15 @@ Shared key: test-b-idempotency-1788607103606
 Stock BEFORE: 100
 
 Response status distribution: { '200': 7, '202': 3 }
+
+Successful (200) responses  : 7
+Unique orderIds in 200s     : 42
+Orders in DB for that id    : 1
 Stock AFTER : 99 (diff = 1)
-Idempotency key status: done
+Idempotency key status      : done
 
 ────────────────────────────────────────────────────
-✅ TEST B PASSED — exactly 1 stock unit consumed, 1 idempotency record
+✅ TEST B PASSED — exactly 1 order in DB, 1 stock unit consumed
 ════════════════════════════════════════════════════
 ```
 

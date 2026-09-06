@@ -6,7 +6,7 @@
  *
  * Expected result:
  *   - Exactly 1 order exists in the DB for this key
- *   - All 10 responses return a consistent result (200 or 202)
+ *   - All 200 responses carry the same orderId
  *   - Stock is decremented by exactly 1 (not 10)
  */
 import pool from '../src/db';
@@ -37,8 +37,8 @@ async function runTestB(): Promise<void> {
       },
       body: JSON.stringify({ productId: PRODUCT_ID, quantity: 1 }),
     })
-      .then(async (r) => ({ status: r.status, body: await r.json() }))
-      .catch((err) => ({ status: 0, body: { error: String(err) } }))
+      .then(async (r) => ({ status: r.status, body: await r.json() as Record<string, unknown> }))
+      .catch((err) => ({ status: 0, body: { error: String(err) } as Record<string, unknown> }))
   );
 
   const results = await Promise.all(requests);
@@ -50,46 +50,61 @@ async function runTestB(): Promise<void> {
   }
   console.log('\nResponse status distribution:', statusCounts);
 
-  // Count orders created for this key
-  const { rows: orderRows } = await pool.query(
-    `SELECT COUNT(*) as count FROM orders o
-     JOIN idempotency_keys ik ON ik.response->>'body' LIKE '%' || o.id::text || '%'
-     WHERE ik.key = $1`,
-    [SHARED_KEY]
-  );
+  // ── Check 1: All 200 responses must carry the same orderId ─────────────────
+  const successResponses = results.filter((r) => r.status === 200);
+  const orderIds = successResponses.map((r) => (r.body as { orderId?: number }).orderId);
+  const uniqueOrderIds = new Set(orderIds);
 
-  // Simpler: count via idempotency key status
-  const { rows: keyRows } = await pool.query(
-    `SELECT status, response FROM idempotency_keys WHERE key = $1`,
-    [SHARED_KEY]
-  );
+  console.log(`\nSuccessful (200) responses  : ${successResponses.length}`);
+  console.log(`Unique orderIds in 200s     : ${[...uniqueOrderIds].join(', ') || 'none'}`);
 
+  // ── Check 2: Verify exactly 1 row in orders table for this orderId ──────────
+  let orderCountInDb = 0;
+  if (uniqueOrderIds.size === 1) {
+    const [theOrderId] = uniqueOrderIds;
+    const { rows } = await pool.query(
+      `SELECT COUNT(*) AS count FROM orders WHERE id = $1`,
+      [theOrderId]
+    );
+    orderCountInDb = parseInt((rows[0] as { count: string }).count, 10);
+  }
+  console.log(`Orders in DB for that id    : ${orderCountInDb}`);
+
+  // ── Check 3: Stock diff ─────────────────────────────────────────────────────
   const stockAfter = (
     await pool.query('SELECT stock FROM products WHERE id = $1', [PRODUCT_ID])
   ).rows[0] as { stock: number };
-
   const stockDiff = stockBefore.stock - stockAfter.stock;
+
   console.log(`Stock AFTER : ${stockAfter.stock} (diff = ${stockDiff})`);
-  console.log(`Idempotency key status: ${keyRows[0]?.status ?? 'not found'}`);
 
-  // Count actual orders in DB that share the same order ID from response
-  const { rows: distinctOrders } = await pool.query(
-    `SELECT COUNT(DISTINCT id) as count FROM orders 
-     WHERE created_at >= NOW() - INTERVAL '1 minute'
-     AND product_id = $1`,
-    [PRODUCT_ID]
+  // ── Check 4: Idempotency key record ────────────────────────────────────────
+  const { rows: keyRows } = await pool.query(
+    `SELECT status FROM idempotency_keys WHERE key = $1`,
+    [SHARED_KEY]
   );
+  console.log(`Idempotency key status      : ${keyRows[0]?.status ?? 'not found'}`);
 
-  // The key metric: stock should only have dropped by 1
-  const passed = stockDiff === 1 && keyRows.length === 1;
+  // ── Assertion ───────────────────────────────────────────────────────────────
+  const passed =
+    uniqueOrderIds.size === 1 &&   // all 200 responses agree on one orderId
+    orderCountInDb === 1 &&         // that orderId exists exactly once in the DB
+    stockDiff === 1 &&              // stock decreased by exactly 1 (not 10)
+    keyRows.length === 1;           // one idempotency record
 
   console.log('\n────────────────────────────────────────────────────');
   if (passed) {
-    console.log('✅ TEST B PASSED — exactly 1 stock unit consumed, 1 idempotency record');
+    console.log('✅ TEST B PASSED — exactly 1 order in DB, 1 stock unit consumed');
   } else {
     console.log('❌ TEST B FAILED');
-    if (stockDiff !== 1) console.log(`   Expected stock diff = 1, got ${stockDiff}`);
-    if (keyRows.length !== 1) console.log(`   Expected 1 idempotency record, got ${keyRows.length}`);
+    if (uniqueOrderIds.size !== 1)
+      console.log(`   Expected all 200 responses to share 1 orderId, got ${uniqueOrderIds.size} unique ids`);
+    if (orderCountInDb !== 1)
+      console.log(`   Expected 1 order row in DB, got ${orderCountInDb}`);
+    if (stockDiff !== 1)
+      console.log(`   Expected stock diff = 1, got ${stockDiff}`);
+    if (keyRows.length !== 1)
+      console.log(`   Expected 1 idempotency record, got ${keyRows.length}`);
     process.exitCode = 1;
   }
   console.log('════════════════════════════════════════════════════\n');
