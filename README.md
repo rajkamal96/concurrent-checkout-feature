@@ -189,3 +189,5 @@ See `DESIGN.md` for the full flow diagram and decision log.
 4. **No rate limiting or auth:** Out of scope per assignment rules.
 
 5. **Stock compensation is best-effort:** If the compensation `UPDATE` (stock put-back on payment failure) itself fails, stock is permanently lost. Production fix: transactional outbox — write the compensation event to the DB atomically, then process it reliably.
+
+6. **`Promise.race` does not cancel the underlying payment call:** After the 6-second timeout fires and stock is returned, the `fakePayment()` call continues running silently in the background. With a real provider, this means a charge could succeed *after* the timeout — resulting in a customer who was charged but received no order. Production fix: use `AbortController` + `fetch` signal to actually abort the HTTP call, then reconcile via the provider's webhook.
