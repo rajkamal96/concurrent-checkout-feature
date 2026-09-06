@@ -91,13 +91,12 @@ npm run test:b
 TEST B — 10 concurrent requests with same Idempotency-Key
 ════════════════════════════════════════════════════
 
-Shared key: test-b-idempotency-1788607103606
+Shared key: test-b-idempotency-1788698538318
 Stock BEFORE: 100
 
 Response status distribution: { '200': 7, '202': 3 }
-
 Successful (200) responses  : 7
-Unique orderIds in 200s     : 42
+Distinct orderIds in 200s   : 1 (ids: 6)
 Orders in DB for that id    : 1
 Stock AFTER : 99 (diff = 1)
 Idempotency key status      : done

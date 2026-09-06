@@ -55,8 +55,8 @@ async function runTestB(): Promise<void> {
   const orderIds = successResponses.map((r) => (r.body as { orderId?: number }).orderId);
   const uniqueOrderIds = new Set(orderIds);
 
-  console.log(`\nSuccessful (200) responses  : ${successResponses.length}`);
-  console.log(`Unique orderIds in 200s     : ${[...uniqueOrderIds].join(', ') || 'none'}`);
+  console.log(`Successful (200) responses  : ${successResponses.length}`);
+  console.log(`Distinct orderIds in 200s   : ${uniqueOrderIds.size} (ids: ${[...uniqueOrderIds].join(', ') || 'none'})`);
 
   // ── Check 2: Verify exactly 1 row in orders table for this orderId ──────────
   let orderCountInDb = 0;
