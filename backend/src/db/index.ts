@@ -8,13 +8,12 @@ if (!process.env.DATABASE_URL) {
 }
 
 // Single shared pool for the process.
-// Max 20 connections: sufficient for the test load (50 concurrent requests)
-// without exhausting Postgres's default connection limit.
+// Max 60 connections: handles 50 concurrent test requests smoothly
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 20,
+  max: 60,
   idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
+  connectionTimeoutMillis: 10_000,
 });
 
 pool.on('error', (err) => {

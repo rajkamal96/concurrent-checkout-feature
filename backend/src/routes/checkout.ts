@@ -95,15 +95,17 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   }
 
   // ── 3. Reserve stock atomically (SELECT … FOR UPDATE) ─────────────────────
-  // We acquire a row-level lock on the product row.
-  // Any other concurrent transaction trying to lock the same row WAITS here.
-  // This ensures exactly one transaction at a time can read-then-modify stock.
-  //
-  // The transaction is kept SHORT on purpose — we commit as soon as stock is
-  // decremented, BEFORE calling the external payment provider.
-  // Holding FOR UPDATE across an 8-second HTTP call would block every other
-  // checkout for the same product for 8 seconds.
-  const client = await pool.connect();
+  // Acquire DB connection safely
+  let client;
+  try {
+    client = await pool.connect();
+  } catch (poolErr) {
+    console.error('Failed to acquire DB connection:', poolErr);
+    await updateIdempotencyKey(idempotencyKey, 'failed', 500, { error: 'Database connection timeout' });
+    res.status(500).json({ error: 'Database connection timeout' });
+    return;
+  }
+
   let stockReserved = false;
 
   try {
@@ -141,7 +143,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {}); // best-effort rollback
     await updateIdempotencyKey(idempotencyKey, 'failed', 500, { error: 'Internal server error' });
-    throw err; // let global error handler respond
+    res.status(500).json({ error: 'Internal server error' });
+    return;
   } finally {
     client.release();
   }
